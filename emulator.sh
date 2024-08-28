@@ -19,7 +19,6 @@ FIRST_FRAME=1
 CONSECUTIVE_FRAME=2
 FLOW_FRAME=3
 
-
 # ==========================================================
 # Definitions
 # ==========================================================
@@ -28,13 +27,14 @@ FLOW_FRAME=3
 VIN="ABC1234THISISAVIN"
 
 # PID 0x00
-SUPPORTED_PIDS_0=0x0001 # only odometer at this point
+SUPPORTED_PIDS_0=0x08180003 # only odometer at this point
 ENG_COOLANT_TEMP=75 # Degrees celsius
 ENG_SPEED=2000 # RPM
 VEHICLE_SPEED=40 # Km/h
 RUNTIME_SINCE_START=3600 # seconds
 # PID 0x20
-SUPPORTED_PIDS_1=0x08180003 # only odometer at this point
+SUPPORTED_PIDS_1=0x00008001
+DISTANCE_SINCE_CODES_CLEARED=200 # km
 # PID 0x40
 SUPPORTED_PIDS_2=0x00000001 # only odometer at this point
 # PID 0x60
@@ -66,10 +66,11 @@ PID_VEHICLE_SPEED=0x0D # Km/h
 PID_RUNTIME_SINCE_START=0x1F # Seconds
 
 ### |       A       |       B       |       C       |       D       |
-###  0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1
-###        0 0             0 0             0 0             0 1
+###  0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1
+###        0 0             0 0             8 0             0 1
 ###
 PID_SUPPORTED_PIDS_1=0x20 # this needs to be updated as more PIDS are added
+PID_DSCC=0x31
 
 ### |       A       |       B       |       C       |       D       |
 ###  0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1
@@ -111,7 +112,8 @@ PID_ARR_MODE_CURRENT_DATA[2]=$PID_ENG_SPEED           ; VALUE_ARR_MODE_CURRENT_D
 PID_ARR_MODE_CURRENT_DATA[3]=$PID_VEHICLE_SPEED       ; VALUE_ARR_MODE_CURRENT_DATA[$PID_VEHICLE_SPEED]=$VEHICLE_SPEED             ; FUNC_ARR_MODE_CURRENT_DATA[$PID_VEHICLE_SPEED]="getVehicleSpeed"
 PID_ARR_MODE_CURRENT_DATA[4]=$PID_RUNTIME_SINCE_START ; VALUE_ARR_MODE_CURRENT_DATA[$PID_RUNTIME_SINCE_START]=$RUNTIME_SINCE_START ; FUNC_ARR_MODE_CURRENT_DATA[$PID_RUNTIME_SINCE_START]="getRuntimeSinceEngineStart"
 ##### 0x20 #####
-PID_ARR_MODE_CURRENT_DATA[32]=$PID_SUPPORTED_PIDS_1 ; VALUE_ARR_MODE_CURRENT_DATA[$PID_SUPPORTED_PIDS_1]=$SUPPORTED_PIDS_1 ; FUNC_ARR_MODE_CURRENT_DATA[$PID_SUPPORTED_PIDS_1]="getSupportedPids"
+PID_ARR_MODE_CURRENT_DATA[32]=$PID_SUPPORTED_PIDS_1   ; VALUE_ARR_MODE_CURRENT_DATA[$PID_SUPPORTED_PIDS_1]=$SUPPORTED_PIDS_1       ; FUNC_ARR_MODE_CURRENT_DATA[$PID_SUPPORTED_PIDS_1]="getSupportedPids"
+PID_ARR_MODE_CURRENT_DATA[49]=$PID_DSCC               ; VALUE_ARR_MODE_CURRENT_DATA[$PID_DSCC]=$DISTANCE_SINCE_CODES_CLEARED       ; FUNC_ARR_MODE_CURRENT_DATA[$PID_DSCC]="getDscc"
 ##### 0x40 #####
 PID_ARR_MODE_CURRENT_DATA[64]=$PID_SUPPORTED_PIDS_2 ; VALUE_ARR_MODE_CURRENT_DATA[$PID_SUPPORTED_PIDS_2]=$SUPPORTED_PIDS_2 ; FUNC_ARR_MODE_CURRENT_DATA[$PID_SUPPORTED_PIDS_2]="getSupportedPids"
 ##### 0x60 #####
@@ -128,7 +130,6 @@ PID_ARR_MODE_CURRENT_DATA[200]=$PID_DUMMY      ; VALUE_ARR_MODE_CURRENT_DATA[$PI
 ## VEHICLE INFO
 PID_VIN=0x02
 
-## TODO: We need some way of knowing if the PID requires multiframe messages or not
 PID_ARR_MODE_VEHICLE_INFO[0]=$PID_VIN        ; VALUE_ARR_MODE_VEHICLE_INFO[$PID_VIN]=$VIN           ; FUNC_ARR_MODE_VEHICLE_INFO[$PID_VIN]="getVin"
 
 
@@ -136,15 +137,15 @@ printf "MODE Indices: ${!MODE_ARR[*]}\n"
 printf "PID Indices: ${!PID_ARR_MODE_CURRENT_DATA[*]}\n"
 
 # ==========================================================
-# print information
+# Print Information
 # ==========================================================
-printf "*** VIN: $VIN\n"
+printf  "VIN: $VIN\n"
 
 # ==========================================================
-# bring up interface for DUT to query
+# Bring up interface for DUT to query
 # ==========================================================
 
-# bring up interface
+# Bring up interface
 ip a show can0 up 2&>1
 CHECK=$?
 if [ $CHECK = 0 ]; then
@@ -217,6 +218,13 @@ getRuntimeSinceEngineStart()
     echo $hexVal
 }
 
+getDscc()
+{
+    # 2 bytes
+    # 256A + B
+    hexVal=$(printf "%X" $1)
+    echo $hexVal
+}
 getSupportedPids()
 {
     # this is going to be 4 bytes of hex, so just remove the leading '0x'
@@ -232,14 +240,15 @@ getOdometerPayload()
 
 getVin()
 {
+    # TODO: There are different formats of VIN, but for now
+    #       we are assuming those which are 17 characters long
     vinBytes=
-    # just return the vin. This is only here to keep with the format right now
-    # actually, lets convert it to bytes
+    # Convert to ASCII Bytes 
     odOutput=$(echo -n $1 | od -x)
     # remove whitespace
     odOutput=$(echo -e "${odOutput}" | tr -d '[:space:]')
     # now we will have a long line that looks like this: 0000000543734483334543249484953415349560000020004e0000021
-    # let's skip 7, then do four characters eight times, repeating until 
+    # let's skip 7, then do four characters eight times
     odOutput=$(echo -n "${odOutput}" | cut -c 8-)
     # do next 16 bytes, swapping 
     for i in {1..8}; do
@@ -273,8 +282,6 @@ getFramePayload()
     # want to keep this info
     line=$1
     # Ex. can0  7E8   [8]  00 FF AA 55 01 02 03 04\n
-    startDelimiter="[8]  "
-    stopDelimiter="\n"
     dataStr=$(echo $line | awk '{print substr($0, 14, 28)}' | tr -d '[:space:]')
     echo "$dataStr"
 }
@@ -327,7 +334,11 @@ processFlowFrame()
     #       determined here when responding with multi-frame messages,
     #       but for now we can just say okay
     printf "Flow Frame processed!\n"
-
+    if [ $IN_MULTIFRAME -eq 1 ]; then
+        return 0
+    else
+        return -1
+    fi
 }
 
 continueMultiFrameMessage()
@@ -422,20 +433,16 @@ sendSingleFrameResponse()
     # if the message is more than 4 Bytes, then we need to send
     # as a multi-frame message :)
     if [ $numBytes -gt 5 ]; then
-        # send as multiframe
-        # construct multiframes
         printf "Response is $numBytes long, need to send as multiple frames"
+
         # mark the start of multiframe message. We will send the first frame, then wait
         # for a flow frame before continuing
         IN_MULTIFRAME=1
 
-        # MAke this a first frame
+        # Make this a first frame
         outgoingFrameType=10
 
-        
-
         # 10    14    < payload >
-        # TODO: The payload will be 5 or more, so this is alright. but what happens when it is exactly 5?
         hexVal=${hexVal:0:12}
         # printf "Payload for VIN : ${hexVal}\n"
         canSendMsg="7E8#$outgoingFrameType$numBytes$hexVal"
@@ -481,7 +488,6 @@ do
             # if processed properly, continue sending the multiframe messages
             if [ $? -eq 0 ]; then
                 continueMultiFrameMessage
-
             else
                 continue
             fi
