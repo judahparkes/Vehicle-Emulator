@@ -1,6 +1,31 @@
 #!/bin/bash
 
-printf "Starting Vehicle Emulator...\n"
+# ==========================================================
+# ARGUMENTS 
+# ==========================================================
+
+Help()
+{
+    printf "./emulator.sh -m [physical|virtual] [optional arguments]\n"
+    printf "\th : display help message\n"
+    printf "\tv : verbose mode\n"
+    printf "\tm : (Required) mode. \"physical\" or \"virtual\"\n"
+}
+
+while getopts ":hm:v" option; do
+   case $option in
+      m) # mode - physical or virtual
+         MODE=$OPTARG;;
+      v) # verbose
+         VERBOSE=true;;
+      h) # display Help
+         Help
+         exit;;
+   esac
+done
+printf "========================================\n"
+printf "Starting Vehicle Emulator in $MODE Mode\n"
+printf "========================================\n"
 
 # ==========================================================
 # GLOBALS
@@ -8,6 +33,7 @@ printf "Starting Vehicle Emulator...\n"
 
 # can msg FIFO
 CAN_FIFO="/tmp/can_fifo"
+CAN_LOGFILE="/tmp/can_log.txt"
 
 # Multi-Frame Messages
 IN_MULTIFRAME=0
@@ -19,31 +45,39 @@ FIRST_FRAME=1
 CONSECUTIVE_FRAME=2
 FLOW_FRAME=3
 
+CAN_IFACE="can0"
+CAN_IFACE_LEN=${#CAN_IFACE}
+
 # ==========================================================
 # Definitions
 # ==========================================================
 
 # Vehicle Info
-VIN="ABC1234THISISAVIN"
+VIN="1FT7W2B62LED60000" # Ford F-250
 
+# TODO: figure out why 7E8 might be chosen, find an address that won't cause problems
+ECU_ADDR="7E8"
+
+# TODO: find a way to make some of these values variable during execution
 # PID 0x00
-SUPPORTED_PIDS_0=0x08180003 # only odometer at this point
+SUPPORTED_PIDS_0=0x08180003
 ENG_COOLANT_TEMP=75 # Degrees celsius
 ENG_SPEED=2000 # RPM
 VEHICLE_SPEED=40 # Km/h
 RUNTIME_SINCE_START=3600 # seconds
 # PID 0x20
-SUPPORTED_PIDS_1=0x00008001
+SUPPORTED_PIDS_1=0x00008001 
 DISTANCE_SINCE_CODES_CLEARED=200 # km
 # PID 0x40
-SUPPORTED_PIDS_2=0x00000001 # only odometer at this point
+SUPPORTED_PIDS_2=0x00000001 # only PIDs [61 - 80] at this point
 # PID 0x60
-SUPPORTED_PIDS_3=0x00000001 # only odometer at this point
+SUPPORTED_PIDS_3=0x00000001 # only PIDs [81 - A0] at this point
 # PID 0x80
-SUPPORTED_PIDS_4=0x00000001 # only odometer at this point
+SUPPORTED_PIDS_4=0x00000001 # only PIDS [A1 - C0] at this point
 # PID 0xA0
 SUPPORTED_PIDS_5=0x04000000 # only odometer at this point
-ODOMETER=299999 # 299,999
+
+ODOMETER=238359 # 123,456 
 # Modes
 MODE_CURRENT_DATA=0x01
 MODE_VEHICLE_INFO=0x09
@@ -66,32 +100,32 @@ PID_VEHICLE_SPEED=0x0D # Km/h
 PID_RUNTIME_SINCE_START=0x1F # Seconds
 
 ### |       A       |       B       |       C       |       D       |
-###  0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1
+### |0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|1 0 0 0|0 0 0 0|0 0 0 0|0 0 0 1|
 ###        0 0             0 0             8 0             0 1
 ###
 PID_SUPPORTED_PIDS_1=0x20 # this needs to be updated as more PIDS are added
 PID_DSCC=0x31
 
 ### |       A       |       B       |       C       |       D       |
-###  0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1
+### |0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 1|
 ###        0 0             0 0             0 0             0 1
 ###
 PID_SUPPORTED_PIDS_2=0x40 # this needs to be updated as more PIDS are added
 
 ### |       A       |       B       |       C       |       D       |
-###  0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1
+### |0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 1|
 ###        0 0             0 0             0 0             0 1
 ###
 PID_SUPPORTED_PIDS_3=0x60 # this needs to be updated as more PIDS are added
 
 ### |       A       |       B       |       C       |       D       |
-###  0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+### |0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|
 ###        0 0             0 0             0 0             0 0
 ###
 PID_SUPPORTED_PIDS_4=0x80 # this needs to be updated as more PIDS are added
 
 ### |       A       |       B       |       C       |       D       |
-###  0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+### |0 0 0 0|0 1 0 0|0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|
 ###        0 4             0 0             0 0             0 0
 ###
 PID_SUPPORTED_PIDS_5=0xA0 # this needs to be updated as more PIDS are added
@@ -99,12 +133,11 @@ PID_SUPPORTED_PIDS_5=0xA0 # this needs to be updated as more PIDS are added
 PID_ODOMETER=0xA6
 
 ### |       A       |       B       |       C       |       D       |
-###  0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+### |0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|0 0 0 0|
 PID_SUPPORTED_PIDS_6=0xC0 # this needs to be updated as more PIDS are added
-PID_DUMMY=0xFF
 
-## PID_ARR will contain all of the supported | Value array will contain the current values 
-## PIDs. The PID_ARR number is meaningless   | for each of the supported PIDs.
+## PID_ARR will contain all of the supported          | Value array will contain the current values                                | Each PID will need its own translation function. 
+## PIDs. The PID_ARR number is meaningless            | for each of the supported PIDs.
 ##### 0x00 #####
 PID_ARR_MODE_CURRENT_DATA[0]=$PID_SUPPORTED_PIDS_0    ; VALUE_ARR_MODE_CURRENT_DATA[$PID_SUPPORTED_PIDS_0]=$SUPPORTED_PIDS_0       ; FUNC_ARR_MODE_CURRENT_DATA[$PID_SUPPORTED_PIDS_0]="getSupportedPids"
 PID_ARR_MODE_CURRENT_DATA[1]=$PID_ENG_COOLANT_TEMP    ; VALUE_ARR_MODE_CURRENT_DATA[$PID_ENG_COOLANT_TEMP]=$ENG_COOLANT_TEMP       ; FUNC_ARR_MODE_CURRENT_DATA[$PID_ENG_COOLANT_TEMP]="getEngineCoolantTemp"
@@ -125,21 +158,28 @@ PID_ARR_MODE_CURRENT_DATA[164]=$PID_SUPPORTED_PIDS_5 ; VALUE_ARR_MODE_CURRENT_DA
 
 PID_ARR_MODE_CURRENT_DATA[170]=$PID_ODOMETER   ; VALUE_ARR_MODE_CURRENT_DATA[$PID_ODOMETER]=$ODOMETER ; FUNC_ARR_MODE_CURRENT_DATA[$PID_ODOMETER]="getOdometerPayload"
 ##### 0xC0 #####
-PID_ARR_MODE_CURRENT_DATA[200]=$PID_DUMMY      ; VALUE_ARR_MODE_CURRENT_DATA[$PID_DUMMY]=0xFFFFFFFF   ; FUNC_ARR_MODE_CURRENT_DATA[$PID_DUMMY]="getDummyVal"
 
 ## VEHICLE INFO
 PID_VIN=0x02
 
 PID_ARR_MODE_VEHICLE_INFO[0]=$PID_VIN        ; VALUE_ARR_MODE_VEHICLE_INFO[$PID_VIN]=$VIN           ; FUNC_ARR_MODE_VEHICLE_INFO[$PID_VIN]="getVin"
 
-
-printf "MODE Indices: ${!MODE_ARR[*]}\n"
-printf "PID Indices: ${!PID_ARR_MODE_CURRENT_DATA[*]}\n"
-
 # ==========================================================
 # Print Information
 # ==========================================================
 printf  "VIN: $VIN\n"
+
+# ==========================================================
+# A Couple Important Things
+# ==========================================================
+
+handle_sigint()
+{
+    # close the fifo and exit
+    exec 3>$-
+    exit 1
+}
+trap handle_sigint SIGINT
 
 # ==========================================================
 # Bring up interface for DUT to query
@@ -150,10 +190,34 @@ ip a show can0 up 2&>1
 CHECK=$?
 if [ $CHECK = 0 ]; then
     printf "putting can interface down...\n"
-    ifconfig can0 down 2&>1
+    ip link set can0 down
+    printf "deleting can0 interface\n"
+    ip link delete can0 
 fi
 
-modprobe vcan || ip link add dev can0 type vcan || ifconfig can0 up 2&>1
+if [ "$MODE" = "physical" ]; then
+    printf "Setting up physical CAN interface\n"
+    ip link set can0 down
+    ip link set can0 type can bitrate 500000 && ip link set can0 up
+    if [ $? -eq 0 ]; then
+        printf "interface up!\n"
+    else
+        printf "interface not up :(\n"
+        exit -1
+    fi
+else
+    printf "Setting up virtual CAN interface\n"
+    modprobe vcan && ip link add dev can0 type vcan loopback on && ip link set can0 up
+    if [ $? -eq 0 ]; then
+        printf "interface up!\n"
+    else
+        printf "interface not up :(\n"
+        exit -1
+    fi
+fi
+
+# modprobe vcan || ip link add dev can0 type vcan || 
+ifconfig can0 up 2&>1
 
 RET=$?
 if [ $RET -eq 0 ]; then
@@ -172,7 +236,7 @@ runCandump()
     # candump will fail if the interface is brought down, so just restart it
     exec 3<> "$CAN_FIFO"
     
-    until $(candump can0 > $CAN_FIFO); do
+    until $(candump can0 | tee $CAN_FIFO $CAN_LOGFILE > /dev/null); do
         printf "candump went down, restarting\n"
         sleep 1
         exec 3<> "$CAN_FIFO"
@@ -185,6 +249,11 @@ runCandump &
 # ==========================================================
 # Data Translation Functions
 # ==========================================================
+# These Functions need to do a few things:
+#     - Convert the predefined value (See definitions above)
+#       into the correct hex value
+#     - Return the correct data in a string that is the correct
+#       number of bytes.
 
 getEngineCoolantTemp()
 {
@@ -218,23 +287,48 @@ getRuntimeSinceEngineStart()
     echo $hexVal
 }
 
+padLeadingZeroes()
+{
+    hexVal=$1
+    numBytes=$2
+
+    for((i=0; i<=$(($((numBytes*2)) - ${#hexVal})); i++))
+    do
+        hexVal="0${hexVal}"
+    done
+    echo $hexVal
+}
+
 getDscc()
 {
     # 2 bytes
+    numBytes=2
     # 256A + B
     hexVal=$(printf "%X" $1)
+    # pad with leading zeros
+    if [ ${#hexVal} -ne 4 ]; then
+        hexVal=$(padLeadingZeroes $hexVal 2)
+    fi
     echo $hexVal
 }
+
 getSupportedPids()
 {
     # this is going to be 4 bytes of hex, so just remove the leading '0x'
-    echo $(echo -n $1 | cut -c 3-)
+    payload=$1
+    echo ${payload:2:8}
 }
+
 getOdometerPayload()
 {
+    # 4 bytes
     # conver the odometer value to the correct format
     # 10*ODOMETER -> hex
     hexVal=$(printf "%X" $(($1*10)))
+    # length should be 8
+    if [ ${#hexVal} -ne 8 ]; then
+        hexVal=$(padLeadingZeroes $hexVal 4)
+    fi
     echo $hexVal
 }
 
@@ -277,13 +371,26 @@ getVin()
 
 getFramePayload()
 {
-    # TODO: we should really have a better way of parsing this.
-    # look at the id and the data and determine whether or not we
-    # want to keep this info
-    line=$1
     # Ex. can0  7E8   [8]  00 FF AA 55 01 02 03 04\n
-    dataStr=$(echo $line | awk '{print substr($0, 14, 28)}' | tr -d '[:space:]')
-    echo "$dataStr"
+    # Ex. can0  1F334455   [3]  02 01 02\n
+    # Ex. can0       7E8   [8]  02 41 55 55 55 55 55 55\n
+    # NOTE: it looks like there is equal space between the last character of the address and the 
+    #       number of bytes [X]. maybe parse between the interface and the numBytes and strip
+    #       whitespace to get the address.
+
+    line=$1
+    # parse out address
+    ## remove interface
+
+    no_if=${line:$CAN_IFACE_LEN}
+    delimiter="["
+    payload=${no_if#*$delimiter}
+    delimiter_pos=$(( ${#no_if} - ${#payload} - ${#delimiter} ))
+    addr=$(echo ${no_if::delimiter_pos})
+    payload="${payload:4:2}${payload:7:2}${payload:10:2}${payload:13:2}${payload:16:2}${payload:19:2}${payload:22:2}${payload:25:2}"
+
+    # now that we have removed address, get the 
+    echo "$payload" "$addr" # h${line:17:2}${line:20:2}${line:23:2}${line:26:2}${line:29:2}${line:32:2}${line:35:2}${line:38:2}
 }
 
 checkCurrentMode()
@@ -309,22 +416,21 @@ checkCurrentMode()
 
 checkCurrentPid()
 {
-        # check PID
-        currentPid=$1
-        currentMode=$2
-        var=PID_ARR_$currentMode[@]
-        for pid in ${!var}
-        do
-            if [ "$pid" = "$currentPid" ]; then
-                # we found a match
-                # leave the loop
-                # printf "Match Found! PID $currentPid, current value ${VALUE_ARR[$currentPid]}\n"
-                return 0 
-            fi
-        done
-
-        # We did not find a recognizable PID
+    # check PID
+    currentPid=$1
+    currentMode=$2
+    # if PID_ARR_$currentMode[$currentPid] is blank
+    if [ -z $PID_ARR_${currenMode}[${currentPid}] ]; then
         return 1
+    fi
+    return 0
+}
+
+processDTCFrame()
+{
+    # TODO: we need to send back the DTCs, but right now there are none
+    cansend can0 $ECU_ADDR#0443000055555555
+    return 0
 }
 
 processFlowFrame()
@@ -333,7 +439,6 @@ processFlowFrame()
     # TODO: we will need to parse this properly and use information
     #       determined here when responding with multi-frame messages,
     #       but for now we can just say okay
-    printf "Flow Frame processed!\n"
     if [ $IN_MULTIFRAME -eq 1 ]; then
         return 0
     else
@@ -356,7 +461,7 @@ continueMultiFrameMessage()
         remainderFrames=$(($remainderFrames + 1))
     fi
 
-    for(( frameNum=0; frameNum<${remainderFrames}; frameNum++))
+    for(( frameNum=1; frameNum<$(($remainderFrames + 1)); frameNum++ ))
     do
         frameType=$CONSECUTIVE_FRAME
         firstByte="${frameType}${frameNum}"
@@ -366,16 +471,12 @@ continueMultiFrameMessage()
             currentFramePayload=${MULTIFRAME_PAYLOAD:0:14}
 
             # next seven bytes will be from the payload global variable
-            canSendMsg="7E8#${firstByte}${currentFramePayload}"
+            canSendMsg="$ECU_ADDR#${firstByte}${currentFramePayload}"
 
             # trim multiframe message by the amount that we took
             MULTIFRAME_PAYLOAD=$(echo -n "${MULTIFRAME_PAYLOAD}" | cut -c 15-)
-            printf "Sending consecutive frame: $canSendMsg\n"
+            # printf "Sending consecutive frame: $canSendMsg\n"
             cansend can0 $canSendMsg
-
-            # flush fifo 
-            read line <$CAN_FIFO
-
         else
             remainingPayload=${#MULTIFRAME_PAYLOAD} 
             currentFramePayload=$MULTIFRAME_PAYLOAD
@@ -385,20 +486,15 @@ continueMultiFrameMessage()
             for(( i=0; i<$padNum; i++ )); do
                 currentFramePayload="${currentFramePayload}55"
             done
-            canSendMsg="7E8#${firstByte}${currentFramePayload}"
-            printf "Sending consecutive frame: $canSendMsg\n"
+            canSendMsg="$ECU_ADDR#${firstByte}${currentFramePayload}"
             cansend can0 $canSendMsg
-            # flush fifo 
-            read line <$CAN_FIFO
         fi
-
     done
-    
-    
 }
 
 sendSingleFrameResponse()
 {
+    # TODO: things like odometer, which are 4 bytes, need to have leading zeroes
     currentMode=$1
     currentPid=$2
     numBytes=
@@ -409,22 +505,18 @@ sendSingleFrameResponse()
     func=${funcArr[$currentPid]}
     valueArrName=VALUE_ARR_$currentMode
     declare -n valueArr=$valueArrName
-    # printf "value before transformation: ${valueArr[$currentPid]}\n"
-    # printf "function call: $func ${valueArr[$currentPid]}\n"
-    $func ${valueArr[$currentPid]}
     tmpVal=$($func ${valueArr[$currentPid]})
-    # printf "value after transformation: $tmpVal\n"
 
     hexVal=$tmpVal
     msgLen=${#hexVal}
     remainder=$(($msgLen % 2))
     numBytes="$((($msgLen / 2) + $remainder))"
-    # printf "numBytes: $numBytes\n"
 
     # Assume this is a Single Frame
     outgoingFrameType=0
 
-    trimmedPid=$(echo "$currentPid" | cut -c 3-)
+    # trimmedPid=$(echo "$currentPid" | cut -c 3-)
+    trimmedPid=${currentPid:2:2}
     # Add leading zeroes if necessary
     if [ $remainder -eq 1 ]; then
         hexVal="0${hexVal}"
@@ -433,7 +525,11 @@ sendSingleFrameResponse()
     # if the message is more than 4 Bytes, then we need to send
     # as a multi-frame message :)
     if [ $numBytes -gt 5 ]; then
-        printf "Response is $numBytes long, need to send as multiple frames"
+        # printf "Response is $numBytes long, need to send as multiple frames"
+        # since we have a multiframe message, we need to add a few extra metadata items
+        numBytes=$((numBytes + 3))
+        numBytesHex=$(printf "%x" ${numBytes})
+        numItems="01"
 
         # mark the start of multiframe message. We will send the first frame, then wait
         # for a flow frame before continuing
@@ -442,12 +538,10 @@ sendSingleFrameResponse()
         # Make this a first frame
         outgoingFrameType=10
 
-        # 10    14    < payload >
-        hexVal=${hexVal:0:12}
-        # printf "Payload for VIN : ${hexVal}\n"
-        canSendMsg="7E8#$outgoingFrameType$numBytes$hexVal"
-        MULTIFRAME_PAYLOAD=$(echo -n "${tmpVal}" | cut -c 13-)
-        # printf "after first send : $MULTIFRAME_PAYLOAD\n" 
+        # 10    14    49     < payload >
+        hexVal=${hexVal:0:6}
+        canSendMsg="$ECU_ADDR#$outgoingFrameType$numBytesHex$serviceValue$trimmedPid$numItems$hexVal"
+        MULTIFRAME_PAYLOAD=$(echo -n "${tmpVal}" | cut -c 7-)
 
     else
         # Add in 0x55 to the end of the message if necessary
@@ -459,10 +553,10 @@ sendSingleFrameResponse()
 
         # now we need to change the numBytes to inclue the PID and the service ( +2 )
         numBytes=$(($numBytes + 2))
-        canSendMsg="7E8#$outgoingFrameType$numBytes$serviceValue$trimmedPid$hexVal"
+        canSendMsg="$ECU_ADDR#$outgoingFrameType$numBytes$serviceValue$trimmedPid$hexVal"
     fi
 
-    printf "Msg: $canSendMsg\n"
+    # printf "Msg: $canSendMsg\n"
     cansend can0 $canSendMsg
 }
 
@@ -474,13 +568,27 @@ while true
 do
     # listen on FIFO and every time there is a line, check the mode and PID
     # if we care about the PID, then respond to it
-    if read line <$CAN_FIFO; then
-        echo "Frame Received: $line\n"
-        recvdPayload=$(getFramePayload "$line")
+    # printf "top of line\n"
+
+    # echo $line
+    if read -e line; then
+
+        # echo "Frame Received: $line\n"
+        read recvdPayload recvdAddr < <(getFramePayload "$line")
+
+        if [ "$recvdAddr" = "$ECU_ADDR" ]; then
+            # printf "this frame is from this ECU, continuing\n"
+            continue
+        fi
+
+        # echo "received payload : \"$recvdPayload\"\n"
         # find the PID in list of supported pids
-        currentFrameType="0x$(echo $recvdPayload | awk '{print substr($0, 1, 2)}')"
-        currentPid="0x$(echo $recvdPayload | awk '{print substr($0, 5, 2)}')"
-        currentMode="0x$(echo $recvdPayload | awk '{print substr($0, 3, 2)}')"
+        # currentFrameType="0x$(echo $recvdPayload | awk '{print substr($0, 1, 2)}')"
+        currentFrameType="0x${recvdPayload:0:2}"
+        # currentPid="0x$(echo $recvdPayload | awk '{print substr($0, 5, 2)}')"
+        currentPid="0x${recvdPayload:4:2}"
+        # currentMode="0x$(echo $recvdPayload | awk '{print substr($0, 3, 2)}')"
+        currentMode="0x${recvdPayload:2:2}"
         # check Frame type
         ## if this is a flow frame, then we don't really care about the pid or mode
         if [ "$currentFrameType" = "0x30" ]; then
@@ -488,6 +596,14 @@ do
             # if processed properly, continue sending the multiframe messages
             if [ $? -eq 0 ]; then
                 continueMultiFrameMessage
+            else
+                continue
+            fi
+        elif [ "$currentMode" = "0x03" ]; then
+            processDTCFrame $currentFramePayload
+            if [ $? -eq 0 ]; then
+                # printf "DTC Frame processed successfully\n"
+                :
             else
                 continue
             fi
@@ -499,14 +615,17 @@ do
             checkCurrentPid $currentPid $modeName
             # if its found then form a response
             if [ $? -eq 0 ]; then
-                printf "Found known PID [$currentPid] on Service [${!currentMode}]. Sending Reply...\n"
+                # printf "Found known PID [$currentPid] on Service [${!currentMode}]. Sending Reply...\n"
                 sendSingleFrameResponse $currentMode $currentPid
             else
-                printf "Could not recognize PID\n"
+                # printf "Could not recognize PID\n"
+                :
+                # continue
             fi
         fi
         # flush fifo 
-        read line <$CAN_FIFO
+#         printf "flushing fifo\n"
+#         echo "$line\n"
+        # line=
     fi
-    
-done
+done <"$CAN_FIFO"
