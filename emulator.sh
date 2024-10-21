@@ -10,19 +10,28 @@ Help()
     printf "\th : display help message\n"
     printf "\tv : verbose mode\n"
     printf "\tm : (Required) mode. \"physical\" or \"virtual\"\n"
+    printf "\tp : (Required) protocol. \"J1939\" or \"J1979\"\n"
 }
 
-while getopts ":hm:v" option; do
+
+while getopts ":hm:p:v" option; do
    case $option in
       m) # mode - physical or virtual
          MODE=$OPTARG;;
       v) # verbose
          VERBOSE=true;;
+      p) # protocol
+         if [ [ "$OPTARG" != "J1939" ] && [ "$OPTARG" != "J1979" ] ]; then
+            Help
+         fi
+         PROTOCOL=$OPTARG;; 
       h) # display Help
          Help
          exit;;
    esac
 done
+
+
 printf "========================================\n"
 printf "Starting Vehicle Emulator in $MODE Mode\n"
 printf "========================================\n"
@@ -33,6 +42,7 @@ printf "========================================\n"
 
 # can msg FIFO
 CAN_FIFO="/tmp/can_fifo"
+SEND_FIFO="/tmp/send_fifo"
 CAN_LOGFILE="/tmp/can_log.txt"
 
 # Multi-Frame Messages
@@ -56,8 +66,13 @@ CAN_IFACE_LEN=${#CAN_IFACE}
 VIN="1FT7W2B62LED60000" # Ford F-250
 
 # Source the correct PID definitions
-printf "Sourcing J1979.sh\n"
-source ./J1979.sh
+if [ "$PROTOCOL" = "J1979" ]; then
+    printf "Sourcing J1979.sh\n"
+    source ./J1979.sh
+else
+    printf "Sourcing J1939.sh\n"
+    source ./J1939.sh
+fi
 
 # TODO: Add J1939 definitions
 
@@ -72,8 +87,9 @@ printf  "VIN: $VIN\n"
 
 handle_sigint()
 {
-    # close the fifo and exit
+    # close the fifos and exit
     exec 3>$-
+    exec 4>$-
     exit 1
 }
 trap handle_sigint SIGINT
@@ -142,6 +158,27 @@ runCandump()
 
 }
 
+runCanSend()
+{
+    # runCanSend will not actually care about scheduling; rather it will send everything on the
+    # queue as fast as it can. It is up to the sender to schedule the sending of the messages
+
+    # may need to send periodically
+    # 100ms 10s
+
+    exec 4<> "$SEND_FIFO"
+
+    while true; do
+        if read -e line; then
+            printf "Sending on queue: $line\n"
+            cansend $CAN_IFACE $line
+        fi
+    done <"$SEND_FIFO"
+
+}
+
+
+
 runCandump &
 
 # ==========================================================
@@ -176,7 +213,8 @@ getFramePayload()
 # start mainloop
 # ==========================================================
 
-while true 
+# J1979
+while [ "$PROTOCOL" = "J1979" ]
 do
     # listen on FIFO and every time there is a line, check the mode and PID
     # if we care about the PID, then respond to it
@@ -239,5 +277,44 @@ do
 #         printf "flushing fifo\n"
 #         echo "$line\n"
         # line=
+    fi
+done <"$CAN_FIFO"
+
+[ -p $SEND_FIFO ] || mkfifo $SEND_FIFO
+runCanSend &
+runScheduler &
+# J1939
+while [ "$PROTOCOL" = "J1939" ]
+do
+    # listen on FIFO and every time there is a line, check the PGN, SPN, and SA
+
+    if read -e line; then
+
+        echo "Frame Received: $line\n"
+        read recvdPayload recvdAddr < <(getFramePayload "$line")
+        # echo $recvdAddr
+        # echo $recvdPayload
+        if [ "${recvdAddr:6:2}" = "$sourceAddress" ]; then
+            continue
+        fi
+
+        # handle requests here
+        requestedPgn=${recvdPayload:0:6}
+        
+        # check to see if PGN is supported
+        if [ "${recvdAddr:2:2}" = "EA" ]; then
+            checkCurrentPgn $requestedPgn
+            if [ $? -ne 1 ]; then
+                continue
+            fi
+        else
+            printf "Not a request message: $recvdAddr#$recvdPayload\n"
+        fi
+        # send response
+        # TODO: get pgn above to send to checkcurrentpgn and then use it here
+        # to call sendmessage
+
+        sendMessage $requestedPgn
+
     fi
 done <"$CAN_FIFO"
