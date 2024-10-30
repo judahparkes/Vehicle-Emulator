@@ -13,24 +13,57 @@ Help()
     printf "\tp : (Required) protocol. \"J1939\" or \"J1979\"\n"
 }
 
-
-while getopts ":hm:p:v" option; do
-   case $option in
+echo "STarting!"
+# PROTOCOL="J1939"
+# CAN_IFACE="can0"
+# RUN_SCHEDULER=1
+while getopts ":m:p:i:d:b:a:v" option; do
+   case ${option} in
+      i) # can interface name can0, can1, etc
+         echo ${OPTARG}
+         CAN_IFACE=${OPTARG}
+         ;;
+      b) # vehicle info file
+         echo ${OPTARG}
+         VEHICLE_INFO_FILE=${OPTARG}
+         ;;
+      a) # source address ( J1939 only )
+         echo ${OPTARG}
+         sourceAddress=${OPTARG}
+         ;;
       m) # mode - physical or virtual
-         MODE=$OPTARG;;
+         echo ${OPTARG}
+         MODE=${OPTARG}
+         ;;
+      d) # disable broadcast messages
+         printf "broadcast messages are disabled\n"
+         echo ${OPTARG}
+         RUN_SCHEDULER=0
+         ;;
       v) # verbose
-         VERBOSE=true;;
+         echo ${OPTARG}
+         VERBOSE=true
+         ;;
       p) # protocol
-         if [ [ "$OPTARG" != "J1939" ] && [ "$OPTARG" != "J1979" ] ]; then
+         echo ${OPTARG}
+         if [ "${OPTARG}" != "J1939" ] && [ "${OPTARG}" != "J1979" ]; then
             Help
          fi
-         PROTOCOL=$OPTARG;; 
+         PROTOCOL=${OPTARG}
+         ;;
       h) # display Help
+         echo ${OPTARG}
          Help
-         exit;;
+         exit
+         ;;
    esac
 done
+echo "done the args!!"
 
+if [ "$RUN_SCHEDULER" = "" ]; then
+    printf "broadcast messages are enabled\n"
+    RUN_SCHEDULER=1
+fi
 
 printf "========================================\n"
 printf "Starting Vehicle Emulator in $MODE Mode\n"
@@ -41,8 +74,8 @@ printf "========================================\n"
 # ==========================================================
 
 # can msg FIFO
-CAN_FIFO="/tmp/can_fifo"
-SEND_FIFO="/tmp/send_fifo"
+CAN_FIFO="/tmp/can_fifo_$(date +%N)"
+SEND_FIFO="/tmp/send_fifo_$(date +%N)"
 CAN_LOGFILE="/tmp/can_log.txt"
 
 # Multi-Frame Messages
@@ -55,15 +88,19 @@ FIRST_FRAME=1
 CONSECUTIVE_FRAME=2
 FLOW_FRAME=3
 
-CAN_IFACE="can0"
 CAN_IFACE_LEN=${#CAN_IFACE}
 
 # ==========================================================
 # Definitions
 # ==========================================================
 
+printf "========================================\n"
+printf "Sourcing $PROTOCOL functions\n"
+printf "========================================\n"
+
 # Vehicle Info
-VIN="1FT7W2B62LED60000" # Ford F-250
+source $VEHICLE_INFO_FILE
+# VIN="1FT7W2B62LED60000" # Ford F-250
 
 # Source the correct PID definitions
 if [ "$PROTOCOL" = "J1979" ]; then
@@ -74,7 +111,7 @@ else
     source ./J1939.sh
 fi
 
-# TODO: Add J1939 definitions
+source ./common.sh
 
 # ==========================================================
 # Print Information
@@ -97,49 +134,9 @@ trap handle_sigint SIGINT
 # ==========================================================
 # Bring up interface for DUT to query
 # ==========================================================
-
 # TODO: move this to an external file/ clean it up
 # Bring up interface
-ip a show can0 up 2&>1
-CHECK=$?
-if [ $CHECK = 0 ]; then
-    printf "putting can interface down...\n"
-    ip link set can0 down
-    printf "deleting can0 interface\n"
-    ip link delete can0 
-fi
-
-if [ "$MODE" = "physical" ]; then
-    printf "Setting up physical CAN interface\n"
-    ip link set can0 down
-    ip link set can0 type can bitrate 500000 && ip link set can0 up
-    if [ $? -eq 0 ]; then
-        printf "interface up!\n"
-    else
-        printf "interface not up :(\n"
-        exit -1
-    fi
-else
-    printf "Setting up virtual CAN interface\n"
-    modprobe vcan && ip link add dev can0 type vcan loopback on && ip link set can0 up
-    if [ $? -eq 0 ]; then
-        printf "interface up!\n"
-    else
-        printf "interface not up :(\n"
-        exit -1
-    fi
-fi
-
-# modprobe vcan || ip link add dev can0 type vcan || 
-ifconfig can0 up 2&>1
-
-RET=$?
-if [ $RET -eq 0 ]; then
-    printf "CAN interface is up!\n"
-else
-    printf "CAN interface failed to come up :(\n"
-    exit -1
-fi
+bringUpCanIface $CAN_IFACE $MODE
 
 # ==========================================================
 # Create FIFO and start dumping can frames into it
@@ -150,7 +147,7 @@ runCandump()
     # candump will fail if the interface is brought down, so just restart it
     exec 3<> "$CAN_FIFO"
     
-    until $(candump can0 | tee $CAN_FIFO $CAN_LOGFILE > /dev/null); do
+    until $(candump $CAN_IFACE | tee $CAN_FIFO $CAN_LOGFILE > /dev/null); do
         printf "candump went down, restarting\n"
         sleep 1
         exec 3<> "$CAN_FIFO"
@@ -177,7 +174,7 @@ runCanSend()
 
 }
 
-
+printf "running candump\n"
 
 runCandump &
 
@@ -222,7 +219,6 @@ do
 
     # echo $line
     if read -e line; then
-
         # echo "Frame Received: $line\n"
         read recvdPayload recvdAddr < <(getFramePayload "$line")
 
@@ -231,17 +227,13 @@ do
             continue
         fi
 
-        # echo "received payload : \"$recvdPayload\"\n"
-        # find the PID in list of supported pids
-        # currentFrameType="0x$(echo $recvdPayload | awk '{print substr($0, 1, 2)}')"
-        currentFrameType="0x${recvdPayload:0:2}"
-        # currentPid="0x$(echo $recvdPayload | awk '{print substr($0, 5, 2)}')"
+        currentFrameType="${recvdPayload:0:2}"
         currentPid="0x${recvdPayload:4:2}"
-        # currentMode="0x$(echo $recvdPayload | awk '{print substr($0, 3, 2)}')"
         currentMode="0x${recvdPayload:2:2}"
+
         # check Frame type
         ## if this is a flow frame, then we don't really care about the pid or mode
-        if [ "$currentFrameType" = "0x30" ]; then
+        if [ "$currentFrameType" = "30" ]; then
             processFlowFrame $currentFrameType
             # if processed properly, continue sending the multiframe messages
             if [ $? -eq 0 ]; then
@@ -249,18 +241,14 @@ do
             else
                 continue
             fi
-        elif [ "$currentMode" = "0x03" ]; then
-            processDTCFrame $currentFramePayload
-            if [ $? -eq 0 ]; then
-                # printf "DTC Frame processed successfully\n"
-                :
-            else
-                continue
-            fi
-        else
+        elif [ "$currentMode" = "0x01" ]; then
             # check mode
-            modeName=$(checkCurrentMode $currentMode)
+            # isSupported=$(checkCurrentMode $currentMode)
+            # if [ "$isSupported" = "0" ]; then
+            #     continue
+            # fi
             # printf "Mode Name: $modeName\n"
+            modeName=${MODE_NAME_ARR[$currentMode]}
             # check PID
             checkCurrentPid $currentPid $modeName
             # if its found then form a response
@@ -272,6 +260,14 @@ do
                 :
                 # continue
             fi
+        elif [ "$currentMode" = "0x03" ]; then
+            processDTCFrame $currentFramePayload
+            if [ $? -eq 0 ]; then
+                # printf "DTC Frame processed successfully\n"
+                :
+            else
+                continue
+            fi
         fi
         # flush fifo 
 #         printf "flushing fifo\n"
@@ -282,7 +278,10 @@ done <"$CAN_FIFO"
 
 [ -p $SEND_FIFO ] || mkfifo $SEND_FIFO
 runCanSend &
-runScheduler &
+# TODO: make sure we kill these processes when we kill the emulator
+if [ $RUN_SCHEDULER -eq 1 ]; then
+    runScheduler &
+fi
 # J1939
 while [ "$PROTOCOL" = "J1939" ]
 do
@@ -292,14 +291,15 @@ do
 
         echo "Frame Received: $line\n"
         read recvdPayload recvdAddr < <(getFramePayload "$line")
-        # echo $recvdAddr
-        # echo $recvdPayload
+        echo $recvdAddr
+        echo $recvdPayload
         if [ "${recvdAddr:6:2}" = "$sourceAddress" ]; then
             continue
         fi
 
         # handle requests here
         requestedPgn=${recvdPayload:0:6}
+        requestedPgn=0x${requestedPgn:2:2}${requestedPgn:0:2}
         
         # check to see if PGN is supported
         if [ "${recvdAddr:2:2}" = "EA" ]; then
@@ -309,6 +309,7 @@ do
             fi
         else
             printf "Not a request message: $recvdAddr#$recvdPayload\n"
+            continue
         fi
         # send response
         # TODO: get pgn above to send to checkcurrentpgn and then use it here

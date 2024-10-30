@@ -232,21 +232,10 @@ checkCurrentMode()
 {
         # check mode
         currentMode=$1
-        for mode in ${MODE_ARR[*]}
-        do
-            # printf "Current Mode: $currentMode, MODE_ARR: $mode\n"
-            if [ "$mode" = "$currentMode" ]; then
-                # we found a match
-                # leave the loop
-                # printf "Match Found! Mode $currentMode\n"
-                tmpName=${MODE_NAME_ARR[$mode]}
-                echo ${tmpName}
-                return 0 
-            fi
-        done
-
-        # we did not find a recognizable mode
-        return 1
+        if [ -v "MODE_ARR[$currentMode]" ]; then
+            return 1
+        fi
+        return 0
 }
 
 checkCurrentPid()
@@ -381,12 +370,16 @@ sendSingleFrameResponse()
         MULTIFRAME_PAYLOAD=$(echo -n "${tmpVal}" | cut -c 7-)
 
     else
+        # NOTE: It takes too much time to pad with 0x55 here, removing for now
         # Add in 0x55 to the end of the message if necessary
         # msg will be 3 Bytes + numBytes
-        for i in $(seq 0 $((8 - 3 - $numBytes)))
-        do
-            hexVal="${hexVal}55"
-        done
+        # time1="$(date +%3N)"
+        # for i in $(seq 0 $((8 - 3 - $numBytes)))
+        # do
+        #     hexVal="${hexVal}55"
+        # done
+        # time2="$(date +%3N)"
+        # printf "$(($time2 - $time1))\n"
 
         # now we need to change the numBytes to inclue the PID and the service ( +2 )
         numBytes=$(($numBytes + 2))

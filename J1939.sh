@@ -2,22 +2,24 @@
 
 # ECU info
 
-sourceAddress="31"
+# sourceAddress="31"
 # SPNs
 
 # 237 - VIN
-SPN_VIN="1234ABCTHISISAVIN"
+SPN_VIN="$VIN"
 
 # 244
-TRIP_DISTANCE="0000FFFF"
+TRIP_DISTANCE="22220000"
 # 245
-TOTAL_VEHICLE_DISTANCE="0000FFFF"
+TOTAL_VEHICLE_DISTANCE="11110000"
 
 SPN_VD="$TRIP_DISTANCE$TOTAL_VEHICLE_DISTANCE"
 # PGNs - in hex format with decimal value commented above
 
 # TP.CM
 PGN_TPCM=0xEC00
+# TP.DT
+PGN_TPDT=0xEB00
 # VI - 65260
 PGN_VIN=0xFEEC
 PGN_VD=0xFEE0
@@ -29,8 +31,8 @@ PERIOD_10_S=10000
 ## PID_ARR will contain all of the supported          | Value array will contain the current values                                | Each PID will need its own translation function. 
 ## PIDs. The PID_ARR number is meaningless            | for each of the supported PIDs.
 ##### 0x00 #####
-PGN_ARR[0]=$PGN_VIN                                   ; VALUE_ARR[$PGN_VIN]=$SPN_VIN                                               ; FUNC_ARR[$PGN_VIN]="getVIN"    ; BROADCAST_PERIOD[$PGN_VIN]=$PERIOD_10_S
-PGN_ARR[1]=$PGN_VD                                    ; VALUE_ARR[$PGN_VD]=$SPN_VD                                                 ; FUNC_ARR[$PGN_VD]="getVD"      ; BROADCAST_PERIOD[$PGN_VD]=$PERIOD_1_S
+PGN_ARR[0]=$PGN_VIN                                   ; VALUE_ARR[$PGN_VIN]=$SPN_VIN                                               ; FUNC_ARR[$PGN_VIN]="getVIN"                      ; BROADCAST_PERIOD[$PGN_VIN]=$PERIOD_10_S
+PGN_ARR[1]=$PGN_VD                                    ; VALUE_ARR[$PGN_VD]=$SPN_VD                                                 ; FUNC_ARR[$PGN_VD]="getVD"                        ; BROADCAST_PERIOD[$PGN_VD]=$PERIOD_1_S
 
 # ==========================================================
 # J1939-Specific Utility Functions
@@ -77,7 +79,7 @@ getVIN()
 checkCurrentPgn()
 {
     # convert value to little endian
-    pgn=0x${1:2:2}${1:0:2}
+    pgn=$1
     # check if pgn is in value array
     if [ -z ${VALUE_ARR[$pgn]} ]; then
         printf "PGN : $1 is not supported\n"
@@ -151,7 +153,7 @@ sendMultiFrame()
     for(( frameNum=1; frameNum<=numPackets; frameNum++ ))
     do
         sleep 0.05
-        dataTransferMsg="${priority}${PGN_TPCM:2:2}FF${sourceAddress}#0${frameNum}${hexVal:0:14}"
+        dataTransferMsg="${priority}${PGN_TPDT:2:2}FF${sourceAddress}#0${frameNum}${hexVal:0:14}"
         # pop the 14 characters off of the front of the message
         hexVal=${hexVal:14:100}
         # printf "TP.DT #$frameNum: $dataTransferMsg\n"
@@ -205,6 +207,7 @@ runScheduler()
     oneHundredMsTime=$(date +%s%3N)
     oneSecondTime=$oneHundredMsTime
     tenSecondTime=$oneHundredMsTime
+    startTime=$oneHundredMsTime
 
     # arrays
     declare -n BROADCAST_ARR_100_MS
@@ -266,6 +269,20 @@ runScheduler()
             done
             # reset the time
             tenSecondTime=$currentTime
+            # if one minute has passed, then remove VIN from the array
+            printf "Time since start: $(($currentTime - $startTime))\n"
+            if [ "$(($currentTime - $startTime))" -gt "20000" ]; then
+                # Remove VIN
+                printf "checking ${BROADCAST_ARR_10_S[index]}\n"
+                for index in "${!BROADCAST_ARR_10_S[@]}"; do
+                    printf "we have ${index} with ${BROADCAST_ARR_10_S[index]}\n"
+                    if [ "${BROADCAST_ARR_10_S[index]}" = "$PGN_VIN" ]; then
+                        printf "No longer broacasting VIN\n"
+                        unset BROADCAST_ARR_10_S[index]
+                    fi
+                done
+            fi
+
         fi
     done
 
