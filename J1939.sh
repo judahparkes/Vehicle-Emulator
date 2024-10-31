@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# ECU info
-
-# sourceAddress="31"
 # SPNs
 
 # 237 - VIN
@@ -14,8 +11,9 @@ TRIP_DISTANCE="22220000"
 TOTAL_VEHICLE_DISTANCE="11110000"
 
 SPN_VD="$TRIP_DISTANCE$TOTAL_VEHICLE_DISTANCE"
-# PGNs - in hex format with decimal value commented above
 
+# PGNs - in hex format with decimal value commented above
+# TODO: Add more PGNs here
 # TP.CM
 PGN_TPCM=0xEC00
 # TP.DT
@@ -28,6 +26,7 @@ PGN_VD=0xFEE0
 PERIOD_100_MS=100
 PERIOD_1_S=1000
 PERIOD_10_S=10000
+
 ## PID_ARR will contain all of the supported          | Value array will contain the current values                                | Each PID will need its own translation function. 
 ## PIDs. The PID_ARR number is meaningless            | for each of the supported PIDs.
 ##### 0x00 #####
@@ -107,6 +106,7 @@ sendSingleFrame()
 
 sendMultiFrame()
 {
+    # TODO: handle RTS
     numBytes=$1
     currentPgn=$2
     hexVal=$3
@@ -143,7 +143,6 @@ sendMultiFrame()
     bamMsg="${priority}${PGN_TPCM:2:2}FF${sourceAddress}#${bamByte}${bigEndianNumBytes}${numPacketsHex}FF$bigEndianPgn"
     
     # send the BAM right away, then start a thread for the data transfer messages
-    # printf "multiframe can msg: $bamMsg\n"
     echo $bamMsg > $SEND_FIFO
 
     # construct the TP.DT messages
@@ -155,11 +154,10 @@ sendMultiFrame()
         sleep 0.05
         dataTransferMsg="${priority}${PGN_TPDT:2:2}FF${sourceAddress}#0${frameNum}${hexVal:0:14}"
         # pop the 14 characters off of the front of the message
+        # TODO: handle this properly and add in padding
         hexVal=${hexVal:14:100}
         # printf "TP.DT #$frameNum: $dataTransferMsg\n"
-        # cansend can0 $dataTransferMsg
         echo $dataTransferMsg > $SEND_FIFO
-
     done
 }
 
@@ -187,10 +185,9 @@ sendMessage()
     msgLen=${#hexVal}
     remainder=$(($msgLen % 2))
     numBytes="$((($msgLen / 2) + $remainder))"
-    # printf "numBytes: $numBytes\n"
 
     # if the message is more than 8 Bytes, then we need to send
-    # as a multi-frame message :)
+    # as a multi-frame message
     if [ $numBytes -gt 8 ]; then
         sendMultiFrame $numBytes $currentPgn $hexVal &
     else
@@ -209,14 +206,11 @@ runScheduler()
     tenSecondTime=$oneHundredMsTime
     startTime=$oneHundredMsTime
 
-    # arrays
+    # broadcast period arrays
     declare -n BROADCAST_ARR_100_MS
     declare -n BROADCAST_ARR_1_S
     declare -n BROADCAST_ARR_10_S
-    # send all broadcast items
 
-    # TODO: make an array of broadcast times and give each PGN one OR NULL
-    #       then go through here and create the period arrays dynamically
     for pgn in "${PGN_ARR[@]}"
     do
         printf "$pgn\n"
@@ -270,14 +264,14 @@ runScheduler()
             # reset the time
             tenSecondTime=$currentTime
             # if one minute has passed, then remove VIN from the array
-            printf "Time since start: $(($currentTime - $startTime))\n"
+            # printf "Time since start: $(($currentTime - $startTime))\n"
             if [ "$(($currentTime - $startTime))" -gt "20000" ]; then
                 # Remove VIN
-                printf "checking ${BROADCAST_ARR_10_S[index]}\n"
+                # printf "checking ${BROADCAST_ARR_10_S[index]}\n"
                 for index in "${!BROADCAST_ARR_10_S[@]}"; do
-                    printf "we have ${index} with ${BROADCAST_ARR_10_S[index]}\n"
+                    # printf "we have ${index} with ${BROADCAST_ARR_10_S[index]}\n"
                     if [ "${BROADCAST_ARR_10_S[index]}" = "$PGN_VIN" ]; then
-                        printf "No longer broacasting VIN\n"
+                        # printf "No longer broacasting VIN\n"
                         unset BROADCAST_ARR_10_S[index]
                     fi
                 done
@@ -285,9 +279,6 @@ runScheduler()
 
         fi
     done
-
-
-
 }
 
 # ==========================================================
@@ -330,4 +321,44 @@ getVin()
     # Swap them and add them to VIN Bytes
     vinBytes="${vinBytes}$b"
     echo $vinBytes
+}
+
+runJ1939Mainloop()
+{
+    [ -p $SEND_FIFO ] || mkfifo $SEND_FIFO
+    runCanSend &
+    # TODO: make sure we kill these processes when we kill the emulator
+    if [ $RUN_SCHEDULER -eq 1 ]; then
+        runScheduler &
+    fi
+    # J1939
+    while [ "$PROTOCOL" = "J1939" ]
+    do
+        if read -e line; then
+
+            # echo "Frame Received: $line\n"
+            read recvdPayload recvdAddr < <(getFramePayload "$line")
+            # echo $recvdAddr
+            # echo $recvdPayload
+            if [ "${recvdAddr:6:2}" = "$sourceAddress" ]; then
+                continue
+            fi
+
+            # handle requests here
+            requestedPgn=${recvdPayload:0:6}
+            requestedPgn=0x${requestedPgn:2:2}${requestedPgn:0:2}
+        
+            # check to see if PGN is supported
+            # TODO: Right now we are only listening for request messages
+            if [ "${recvdAddr:2:2}" = "EA" ]; then
+                checkCurrentPgn $requestedPgn
+                if [ $? -ne 1 ]; then
+                    continue
+                fi
+            else
+                continue
+            fi
+            sendMessage $requestedPgn
+        fi
+    done <"$CAN_FIFO"
 }

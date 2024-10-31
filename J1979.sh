@@ -1,6 +1,4 @@
 
-
-# TODO: figure out why 7E8 might be chosen, find an address that won't cause problems
 ECU_ADDR="7E8"
 
 # TODO: find a way to make some of these values variable during execution
@@ -255,13 +253,12 @@ checkCurrentPid()
 processDTCFrame()
 {
     # TODO: we need to send back the DTCs, but right now there are none
-    cansend can0 $ECU_ADDR#0443000055555555
+    cansend $CAN_IFACE $ECU_ADDR#0443000055555555
     return 0
 }
 
 processFlowFrame()
 {
-    # process the flow frame. Going to be pretty simple for now
     # TODO: we will need to parse this properly and use information
     #       determined here when responding with multi-frame messages,
     #       but for now we can just say okay
@@ -276,12 +273,9 @@ continueMultiFrameMessage()
 {
     # TODO: make this a little more intelligent by abiding by the controls given in the flow frame
     # check how many bytes we have left. We will send 7 at a time, so determine how many frames we have left to send
-    # printf "multiframe_payload: $MULTIFRAME_PAYLOAD\n"
     multiframeSize=${#MULTIFRAME_PAYLOAD}
-    # printf "multiframeSize: $multiframeSize\n"
     remainderBytes=$(($multiframeSize % 14))
     remainderFrames=$(($multiframeSize / 14))
-    # printf "We are going to send $remainderFrames full frames\n"
     
     if [ $remainderBytes -ne 0 ]; then
         remainderFrames=$(($remainderFrames + 1))
@@ -302,7 +296,7 @@ continueMultiFrameMessage()
             # trim multiframe message by the amount that we took
             MULTIFRAME_PAYLOAD=$(echo -n "${MULTIFRAME_PAYLOAD}" | cut -c 15-)
             # printf "Sending consecutive frame: $canSendMsg\n"
-            cansend can0 $canSendMsg
+            cansend $CAN_IFACE $canSendMsg
         else
             remainingPayload=${#MULTIFRAME_PAYLOAD} 
             currentFramePayload=$MULTIFRAME_PAYLOAD
@@ -313,13 +307,14 @@ continueMultiFrameMessage()
                 currentFramePayload="${currentFramePayload}55"
             done
             canSendMsg="$ECU_ADDR#${firstByte}${currentFramePayload}"
-            cansend can0 $canSendMsg
+            cansend $CAN_IFACE $canSendMsg
         fi
     done
 }
 
 sendSingleFrameResponse()
 {
+    # TODO: This function actually handles multiframe responses; split it up in two
     # TODO: things like odometer, which are 4 bytes, need to have leading zeroes
     currentMode=$1
     currentPid=$2
@@ -351,7 +346,7 @@ sendSingleFrameResponse()
     # if the message is more than 4 Bytes, then we need to send
     # as a multi-frame message :)
     if [ $numBytes -gt 5 ]; then
-        # printf "Response is $numBytes long, need to send as multiple frames"
+        printf "Response is $numBytes long, need to send as multiple frames"
         # since we have a multiframe message, we need to add a few extra metadata items
         numBytes=$((numBytes + 3))
         numBytesHex=$(printf "%x" ${numBytes})
@@ -387,6 +382,61 @@ sendSingleFrameResponse()
     fi
 
     # printf "Msg: $canSendMsg\n"
-    cansend can0 $canSendMsg
+    cansend $CAN_IFACE $canSendMsg
 }
 
+runJ1979Mainloop()
+{
+    # J1979
+    while [ "$PROTOCOL" = "J1979" ]
+    do
+        # listen on FIFO and every time there is a line, check the mode and PID
+        # if we care about the PID, then respond to it
+
+        if read -e line; then
+            # echo "Frame Received: $line\n"
+            read recvdPayload recvdAddr < <(getFramePayload "$line")
+
+            if [ "$recvdAddr" = "$ECU_ADDR" ]; then
+                continue
+            fi
+
+            currentFrameType="${recvdPayload:0:2}"
+            currentPid="0x${recvdPayload:4:2}"
+            currentMode="0x${recvdPayload:2:2}"
+
+            # check Frame type
+            ## if this is a flow frame, then we don't really care about the pid or mode
+            if [ "$currentFrameType" = "30" ]; then
+                processFlowFrame $currentFrameType
+                # if processed properly, continue sending the multiframe messages
+                if [ $? -eq 0 ]; then
+                    continueMultiFrameMessage
+                else
+                    continue
+                fi
+            elif [ "$currentMode" = "0x01" ] || [ "$currentMode" = "0x09" ]; then
+                # check mode
+                modeName=${MODE_NAME_ARR[$currentMode]}
+                # check PID
+                checkCurrentPid $currentPid $modeName
+                # if its found then form a response
+                if [ $? -eq 0 ]; then
+                    # printf "Found known PID [$currentPid] on Service [${!currentMode}]. Sending Reply...\n"
+                    sendSingleFrameResponse $currentMode $currentPid
+                else
+                    # printf "Could not recognize PID\n"
+                    :
+                    # continue
+                fi
+            elif [ "$currentMode" = "0x03" ]; then
+                processDTCFrame $currentFramePayload
+                if [ $? -eq 0 ]; then
+                    :
+                else
+                    continue
+                fi
+            fi
+        fi
+    done <"$CAN_FIFO"
+}
