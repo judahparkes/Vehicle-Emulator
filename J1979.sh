@@ -5,12 +5,14 @@ ECU_ADDR="7E8"
 # PID 0x00
 SUPPORTED_PIDS_0=0x08180003
 ENG_COOLANT_TEMP=75 # Degrees celsius
+THROTTLE_POSITION=72 # percentage
 ENG_SPEED=2000 # RPM
 VEHICLE_SPEED=40 # Km/h
 RUNTIME_SINCE_START=3600 # seconds
 # PID 0x20
 SUPPORTED_PIDS_1=0x00008001 
 DISTANCE_SINCE_CODES_CLEARED=200 # km
+FUEL_TANK_LEVEL=98 # percentage
 # PID 0x40
 SUPPORTED_PIDS_2=0x00000001 # only PIDs [61 - 80] at this point
 # PID 0x60
@@ -20,7 +22,7 @@ SUPPORTED_PIDS_4=0x00000001 # only PIDS [A1 - C0] at this point
 # PID 0xA0
 SUPPORTED_PIDS_5=0x04000000 # only odometer at this point
 
-ODOMETER=238359 # 123,456 
+ODOMETER=238311 # 123,456 
 # Modes
 MODE_CURRENT_DATA=0x01
 MODE_VEHICLE_INFO=0x09
@@ -38,6 +40,7 @@ MODE_ARR[8]=$MODE_VEHICLE_INFO ; MODE_NAME_ARR[$MODE_VEHICLE_INFO]="MODE_VEHICLE
 ###
 PID_SUPPORTED_PIDS_0=0x00 # this needs to be updated as more PIDS are added
 PID_ENG_COOLANT_TEMP=0x05 # Degrees Celsius
+PID_THROTTLE_POSITION=0x11 # percentage
 PID_ENG_SPEED=0x0C # RPM
 PID_VEHICLE_SPEED=0x0D # Km/h
 PID_RUNTIME_SINCE_START=0x1F # Seconds
@@ -47,6 +50,7 @@ PID_RUNTIME_SINCE_START=0x1F # Seconds
 ###        0 0             0 0             8 0             0 1
 ###
 PID_SUPPORTED_PIDS_1=0x20 # this needs to be updated as more PIDS are added
+PID_FUEL_TANK_LEVEL=0x2F # percentage
 PID_DSCC=0x31
 
 ### |       A       |       B       |       C       |       D       |
@@ -84,12 +88,14 @@ PID_SUPPORTED_PIDS_6=0xC0 # this needs to be updated as more PIDS are added
 ##### 0x00 #####
 PID_ARR_MODE_CURRENT_DATA[0]=$PID_SUPPORTED_PIDS_0    ; VALUE_ARR_MODE_CURRENT_DATA[$PID_SUPPORTED_PIDS_0]=$SUPPORTED_PIDS_0       ; FUNC_ARR_MODE_CURRENT_DATA[$PID_SUPPORTED_PIDS_0]="getSupportedPids"
 PID_ARR_MODE_CURRENT_DATA[1]=$PID_ENG_COOLANT_TEMP    ; VALUE_ARR_MODE_CURRENT_DATA[$PID_ENG_COOLANT_TEMP]=$ENG_COOLANT_TEMP       ; FUNC_ARR_MODE_CURRENT_DATA[$PID_ENG_COOLANT_TEMP]="getEngineCoolantTemp"
-PID_ARR_MODE_CURRENT_DATA[2]=$PID_ENG_SPEED           ; VALUE_ARR_MODE_CURRENT_DATA[$PID_ENG_SPEED]=$ENG_SPEED                     ; FUNC_ARR_MODE_CURRENT_DATA[$PID_ENG_SPEED]="getEngineSpeed"
-PID_ARR_MODE_CURRENT_DATA[3]=$PID_VEHICLE_SPEED       ; VALUE_ARR_MODE_CURRENT_DATA[$PID_VEHICLE_SPEED]=$VEHICLE_SPEED             ; FUNC_ARR_MODE_CURRENT_DATA[$PID_VEHICLE_SPEED]="getVehicleSpeed"
-PID_ARR_MODE_CURRENT_DATA[4]=$PID_RUNTIME_SINCE_START ; VALUE_ARR_MODE_CURRENT_DATA[$PID_RUNTIME_SINCE_START]=$RUNTIME_SINCE_START ; FUNC_ARR_MODE_CURRENT_DATA[$PID_RUNTIME_SINCE_START]="getRuntimeSinceEngineStart"
+PID_ARR_MODE_CURRENT_DATA[2]=$PID_THROTTLE_POSITION   ; VALUE_ARR_MODE_CURRENT_DATA[$PID_THROTTLE_POSITION]=$THROTTLE_POSITION     ; FUNC_ARR_MODE_CURRENT_DATA[$PID_THROTTLE_POSITION]="getThrottlePosition"
+PID_ARR_MODE_CURRENT_DATA[3]=$PID_ENG_SPEED           ; VALUE_ARR_MODE_CURRENT_DATA[$PID_ENG_SPEED]=$ENG_SPEED                     ; FUNC_ARR_MODE_CURRENT_DATA[$PID_ENG_SPEED]="getEngineSpeed"
+PID_ARR_MODE_CURRENT_DATA[4]=$PID_VEHICLE_SPEED       ; VALUE_ARR_MODE_CURRENT_DATA[$PID_VEHICLE_SPEED]=$VEHICLE_SPEED             ; FUNC_ARR_MODE_CURRENT_DATA[$PID_VEHICLE_SPEED]="getVehicleSpeed"
+PID_ARR_MODE_CURRENT_DATA[5]=$PID_RUNTIME_SINCE_START ; VALUE_ARR_MODE_CURRENT_DATA[$PID_RUNTIME_SINCE_START]=$RUNTIME_SINCE_START ; FUNC_ARR_MODE_CURRENT_DATA[$PID_RUNTIME_SINCE_START]="getRuntimeSinceEngineStart"
 ##### 0x20 #####
 PID_ARR_MODE_CURRENT_DATA[32]=$PID_SUPPORTED_PIDS_1   ; VALUE_ARR_MODE_CURRENT_DATA[$PID_SUPPORTED_PIDS_1]=$SUPPORTED_PIDS_1       ; FUNC_ARR_MODE_CURRENT_DATA[$PID_SUPPORTED_PIDS_1]="getSupportedPids"
 PID_ARR_MODE_CURRENT_DATA[49]=$PID_DSCC               ; VALUE_ARR_MODE_CURRENT_DATA[$PID_DSCC]=$DISTANCE_SINCE_CODES_CLEARED       ; FUNC_ARR_MODE_CURRENT_DATA[$PID_DSCC]="getDscc"
+PID_ARR_MODE_CURRENT_DATA[50]=$PID_FUEL_TANK_LEVEL    ; VALUE_ARR_MODE_CURRENT_DATA[$PID_FUEL_TANK_LEVEL]=$FUEL_TANK_LEVEL         ; FUNC_ARR_MODE_CURRENT_DATA[$PID_FUEL_TANK_LEVEL]="getFuelTankLevel"
 ##### 0x40 #####
 PID_ARR_MODE_CURRENT_DATA[64]=$PID_SUPPORTED_PIDS_2 ; VALUE_ARR_MODE_CURRENT_DATA[$PID_SUPPORTED_PIDS_2]=$SUPPORTED_PIDS_2 ; FUNC_ARR_MODE_CURRENT_DATA[$PID_SUPPORTED_PIDS_2]="getSupportedPids"
 ##### 0x60 #####
@@ -115,6 +121,22 @@ PID_ARR_MODE_VEHICLE_INFO[0]=$PID_VIN        ; VALUE_ARR_MODE_VEHICLE_INFO[$PID_
 #       into the correct hex value
 #     - Return the correct data in a string that is the correct
 #       number of bytes.
+
+getFuelTankLevel()
+{
+    # should be a percentage, that is, a number between 0 and 100 (inclusive)    
+    # (A/255) * 100 = perc -> perc/100 * 255
+    hexVal=$(printf "%X" $(( ($1*255)/100 )))
+    echo $hexVal
+}
+
+getThrottlePosition()
+{
+    # should be a percentage, that is, a number between 0 and 100 (inclusive)    
+    # (A/255) * 100 = perc -> perc/100 * 255
+    hexVal=$(printf "%X" $(( ($1*255)/100 )))
+    echo $hexVal
+}
 
 getEngineCoolantTemp()
 {
@@ -390,6 +412,9 @@ runJ1979Mainloop()
     # J1979
     while [ "$PROTOCOL" = "J1979" ]
     do
+        # source the database
+        source values.sh
+
         # listen on FIFO and every time there is a line, check the mode and PID
         # if we care about the PID, then respond to it
 

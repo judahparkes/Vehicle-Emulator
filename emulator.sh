@@ -111,7 +111,8 @@ banner "Sourcing $PROTOCOL functions"
 if [ ! -z $VEHICLE_INFO_FILE ]; then
     source $VEHICLE_INFO_FILE
 else
-    VIN="1234ABCTHISISAVIN"
+    # VIN="1234ABCTHISISAVIN"
+    VIN="JUDAHSPONTIACVIBE"
     printf "Vehicle Info File not specified, default VIN=$VIN\n"
 fi
 
