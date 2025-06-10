@@ -6,7 +6,7 @@
 
 Help()
 {
-    printf "./emulator.sh -m [physical|virtual] -p [J1939|J1979] -i [interface (can0, can1, etc)] [optional arguments]\n"
+    printf "./emulator.sh -m [physical|virtual] -p [J1939|J1979|J19792] -i [interface (can0, can1, etc)] [optional arguments]\n"
     printf "\t-m : (Required) mode. \"physical\" or \"virtual\"\n"
     printf "\t-a : (Required) ECU Address. For J1979, can be 7E0 - 7E8. For J1939 can be 0x00 - 0xFE.\n"
     printf "\t-p : (Required) protocol. \"J1939\" or \"J1979\"\n"
@@ -49,7 +49,7 @@ while getopts ":m:p:i:db:a:v" option; do
          VERBOSE=true
          ;;
       p) # protocol
-         if [ "${OPTARG}" != "J1939" ] && [ "${OPTARG}" != "J1979" ]; then
+         if [ "${OPTARG}" != "J1939" ] && [ "${OPTARG}" != "J19792" ] && [ "${OPTARG}" != "J1979" ]; then
             Help
          fi
          PROTOCOL=${OPTARG}
@@ -120,9 +120,15 @@ fi
 if [ "$PROTOCOL" = "J1979" ]; then
     printf "Sourcing J1979.sh\n"
     source ./J1979.sh
-else
+elif [ "$PROTOCOL" = "J19792" ]; then
+    printf "Sourcing J19792.sh\n"
+    source ./J19792.sh
+elif [ "$PROTOCOL" = "J1939" ]; then
     printf "Sourcing J1939.sh\n"
     source ./J1939.sh
+else
+    printf "invalid protocol: $PROTOCOL\n"
+    exit
 fi
 
 source ./common.sh
@@ -169,3 +175,4 @@ runCandump &
 # ==========================================================
 
 run${PROTOCOL}Mainloop
+
