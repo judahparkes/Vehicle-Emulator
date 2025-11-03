@@ -397,6 +397,17 @@ sendSingleFrameResponse()
         # done
         # time2="$(date +%3N)"
         # printf "$(($time2 - $time1))\n"
+        # try this: 
+        count=$((8 - 3 - $numBytes))
+        if [ $count -eq 4 ]; then
+            hexVal="${hexVal}55555555"
+        elif [ $count -eq 3 ]; then
+            hexVal="${hexVal}555555"
+        elif [ $count -eq 2 ]; then
+            hexVal="${hexVal}5555"
+        elif [ $count -eq 1 ]; then
+            hexVal="${hexVal}55"
+        fi
 
         # now we need to change the numBytes to inclue the PID and the service ( +2 )
         numBytes=$(($numBytes + 2))
