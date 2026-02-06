@@ -1,5 +1,6 @@
 
 ECU_ADDR="7E8"
+SUPPORTED_PIDS_0=0x80000000
 
 # Modes
 MODE_CURRENT_DATA=0x22
@@ -8,10 +9,15 @@ MODE_CURRENT_DATA=0x22
 MODE_ARR[22]=$MODE_CURRENT_DATA  ; MODE_NAME_ARR[$MODE_CURRENT_DATA]="MODE_CURRENT_DATA"
 
 ## DID ##
+## 0xF4 00 ##
+PID_SUPPORTED_PIDS_0=0xF400
+PID_IM_READINESS=0xF401
 ##
 ## 0xF8 00 ##
 PID_PROTOCOL=0xFE10
-PID_ARR_MODE_CURRENT_DATA[1000]=$PID_PROTOCOL ; VALUE_ARR_MODE_CURRENT_DATA[$PID_PROTOCOL]=0x1      ; FUNC_ARR_MODE_CURRENT_DATA[$PID_PROTOCOL]="getOBDonUDSProtocol"
+PID_ARR_MODE_CURRENT_DATA[0]=$PID_SUPPORTED_PIDS_0    ; VALUE_ARR_MODE_CURRENT_DATA[$PID_SUPPORTED_PIDS_0]=$SUPPORTED_PIDS_0       ; FUNC_ARR_MODE_CURRENT_DATA[$PID_SUPPORTED_PIDS_0]="getSupportedPids"
+PID_ARR_MODE_CURRENT_DATA[1000]=$PID_PROTOCOL ; VALUE_ARR_MODE_CURRENT_DATA[$PID_PROTOCOL]=0x1                ; FUNC_ARR_MODE_CURRENT_DATA[$PID_PROTOCOL]="getOBDonUDSProtocol"
+PID_ARR_MODE_CURRENT_DATA[1001]=$PID_IM_READINESS ; VALUE_ARR_MODE_CURRENT_DATA[$PID_IM_READINESS]=0x8100FF00 ; FUNC_ARR_MODE_CURRENT_DATA[$PID_IM_READINESS]="getIMReadiness"
 
 # ==========================================================
 # Data Translation Functions
@@ -21,6 +27,19 @@ PID_ARR_MODE_CURRENT_DATA[1000]=$PID_PROTOCOL ; VALUE_ARR_MODE_CURRENT_DATA[$PID
 #       into the correct hex value
 #     - Return the correct data in a string that is the correct
 #       number of bytes.
+
+getSupportedPids()
+{
+    # this is going to be 4 bytes of hex, so just remove the leading '0x'
+    payload=$1
+    echo ${payload:2:8}
+}
+
+getIMReadiness()
+{
+    echo "8100FF00"
+}
+
 getOBDonUDSProtocol()
 {
     echo "01"
